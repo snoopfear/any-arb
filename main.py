@@ -52,8 +52,8 @@ def send_tx(w3: Web3, chain: str):
         try:
             balance = w3.eth.get_balance(SENDER_ADDRESS)
             eth_balance = w3.from_wei(balance, 'ether')
-            if eth_balance <= 0.1:
-                print(f"❌ Баланс в {chain.upper()} меньше или равен 0.1 ETH: {eth_balance:.4f} ETH")
+            if eth_balance <= 1:
+                print(f"❌ Баланс в {chain.upper()} меньше или равен 1 ETH: {eth_balance:.4f} ETH")
                 return False
 
             nonce = w3.eth.get_transaction_count(SENDER_ADDRESS, 'pending')
@@ -67,16 +67,16 @@ def send_tx(w3: Web3, chain: str):
             estimated_gas = w3.eth.estimate_gas({
                 'from': SENDER_ADDRESS,
                 'to': to_address,
-                'value': w3.to_wei(1, 'ether'),  # Используем 0.1 ETH как фиксированную сумму
+                'value': w3.to_wei(1, 'ether'),
                 'data': data
             })
-            
+
             tx = {
                 'chainId': w3.eth.chain_id,
                 'nonce': nonce,
                 'to': to_address,
-                'value': w3.to_wei(1, 'ether'),  # 0.1 ETH как фиксированная сумма
-                'gas': estimated_gas,  # Используем динамический лимит газа
+                'value': w3.to_wei(1, 'ether'),  # Транзакция с 1 ETH
+                'gas': estimated_gas,
                 'maxFeePerGas': base_fee + priority_fee,
                 'maxPriorityFeePerGas': priority_fee,
                 'type': 2,
@@ -91,17 +91,12 @@ def send_tx(w3: Web3, chain: str):
 
         except Web3RPCError as e:
             error_message = str(e)
-            if 'nonce too low' in error_message:
-                print('⚠️ Nonce too low, пробуем снова...')
-                time.sleep(1)
-                continue
-            elif 'replacement transaction underpriced' in error_message:
-                print('⚠️ Replacement transaction underpriced, увеличиваем приоритет...')
-                time.sleep(1)
-                continue
-            else:
-                print(f'❌ Неизвестная ошибка: {error_message}')
-                break
+            print(f'⚠️ [{chain.upper()}] Ошибка при отправке транзакции: {error_message}')
+            # Игнорируем ошибку и продолжаем выполнение программы
+            continue
+        except Exception as e:
+            print(f'❌ [{chain.upper()}] Неизвестная ошибка: {str(e)}')
+            continue
 
     print('❌ Не удалось отправить транзакцию после 3 попыток.')
     return False
@@ -117,12 +112,12 @@ while True:
         all_low = True
         for c, w in WEB3_INSTANCES.items():
             bal = w.eth.get_balance(SENDER_ADDRESS)
-            if w.from_wei(bal, 'ether') > 0.1:
+            if w.from_wei(bal, 'ether') > 1:
                 all_low = False
                 break
 
         if all_low:
-            print("❌ Во всех сетях баланс ниже 0.1 ETH. Завершение.")
+            print("❌ Во всех сетях баланс ниже 1 ETH. Завершение.")
             break
 
     sleep_time = random.randint(1, 5)
