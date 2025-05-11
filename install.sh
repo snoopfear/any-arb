@@ -12,7 +12,7 @@ mkdir -p "$PROJECT_DIR"
 cd "$PROJECT_DIR"
 
 echo "Скачивание main.py..."
-curl -s https://raw.githubusercontent.com/yourusername/any-arb-installer/main/main.py -o main.py
+curl -s https://raw.githubusercontent.com/snoopfear/any-arb/refs/heads/main/main.py -o main.py
 
 echo "Установка завершена ✅"
 
