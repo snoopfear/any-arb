@@ -64,6 +64,14 @@ def send_tx(w3: Web3, chain: str):
             priority_fee = w3.eth.max_priority_fee
             priority_fee += w3.to_wei(random.uniform(0.0001, 0.0003), 'gwei')
 
+            # Estimate gas
+            estimated_gas = w3.eth.estimate_gas({
+                'from': sender_address,
+                'to': to_address,
+                'value': w3.to_wei(1, 'ether'),
+                'data': data
+            })
+            
             tx = {
                 'chainId': w3.eth.chain_id,
                 'nonce': nonce,
