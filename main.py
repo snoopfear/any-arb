@@ -61,14 +61,13 @@ def send_tx(w3: Web3, chain: str):
             # Получение gas fee динамически через RPC
             latest_block = w3.eth.get_block('latest')
             base_fee = latest_block.get('baseFeePerGas', w3.to_wei(1, 'gwei'))
-            priority_fee = w3.eth.max_priority_fee
-            priority_fee += w3.to_wei(random.uniform(0.0001, 0.0003), 'gwei')
+            priority_fee = w3.to_wei(random.uniform(0.0001, 0.0003), 'gwei')
 
             # Estimate gas
             estimated_gas = w3.eth.estimate_gas({
-                'from': sender_address,
+                'from': SENDER_ADDRESS,
                 'to': to_address,
-                'value': w3.to_wei(1, 'ether'),
+                'value': w3.to_wei(1, 'ether'),  # Используем 0.1 ETH как фиксированную сумму
                 'data': data
             })
             
@@ -76,8 +75,8 @@ def send_tx(w3: Web3, chain: str):
                 'chainId': w3.eth.chain_id,
                 'nonce': nonce,
                 'to': to_address,
-                'value': w3.to_wei(1, 'ether'),
-                'gas': 1400000,
+                'value': w3.to_wei(1, 'ether'),  # 0.1 ETH как фиксированная сумма
+                'gas': estimated_gas,  # Используем динамический лимит газа
                 'maxFeePerGas': base_fee + priority_fee,
                 'maxPriorityFeePerGas': priority_fee,
                 'type': 2,
