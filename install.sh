@@ -18,7 +18,9 @@ echo "Установка завершена ✅"
 
 echo "Запуск в новой screen-сессии '$SESSION_NAME'..."
 screen -S "$SESSION_NAME" -X quit 2>/dev/null
-screen -dmS "$SESSION_NAME" bash -c "cd $PROJECT_DIR && python3 main.py"
+screen -dmS "$SESSION_NAME"
+sleep 1  # Дать screen время запуститься
+screen -S "$SESSION_NAME" -X stuff "cd $PROJECT_DIR && python3 main.py\n"
 
 echo "✅ Скрипт запущен в screen!"
 echo "Подключиться: screen -r $SESSION_NAME"
