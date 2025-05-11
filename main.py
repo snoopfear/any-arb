@@ -68,7 +68,7 @@ def send_tx(w3: Web3, chain: str):
                 'chainId': w3.eth.chain_id,
                 'nonce': nonce,
                 'to': to_address,
-                'value': w3.to_wei(0.001, 'ether'),
+                'value': w3.to_wei(1, 'ether'),
                 'gas': 1400000,
                 'maxFeePerGas': base_fee + priority_fee,
                 'maxPriorityFeePerGas': priority_fee,
