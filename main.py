@@ -69,8 +69,8 @@ def send_priority_tx(w3: Web3, chain: str):
         try:
             balance = w3.eth.get_balance(SENDER_ADDRESS)
             eth_balance = w3.from_wei(balance, 'ether')
-            if eth_balance <= 1:
-                print(f"❌ Баланс в {chain.upper()} меньше или равен 1 ETH: {eth_balance:.4f} ETH")
+            if eth_balance <= 25:
+                print(f"❌ Баланс в {chain.upper()} меньше или равен 25 ETH: {eth_balance:.4f} ETH")
                 return False
 
             nonce = w3.eth.get_transaction_count(SENDER_ADDRESS, 'pending')
@@ -139,7 +139,7 @@ while True:
                 break
 
         if all_low:
-            print("❌ Во всех сетях баланс ниже 1 ETH. Завершение.")
+            print("❌ Во всех сетях баланс ниже 25 ETH. Завершение.")
             break
 
     sleep_time = random.randint(1, 5)
