@@ -28,24 +28,41 @@ TO_ADDRESSES = {
     'uni': '0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9',
 }
 
-# Данные для транзакций
-TX_DATA = {
-    'opt': '0x56591d5961726274000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000189b27215bC6c8d842A4D320fcb232ce8A0760130000000000000000000000000000000000000000000000000dde4f3abc938436000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000',
-    'base': '0x56591d5961726274000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000189b27215bC6c8d842A4D320fcb232ce8A0760130000000000000000000000000000000000000000000000000de076b510f59707000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000',
-    'uni': '0x56591d5961726274000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000189b27215bC6c8d842A4D320fcb232ce8A0760130000000000000000000000000000000000000000000000000de076b706379126000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000',
-}
+BASE_VALUE = 0x0de089c08f7071dc
 
-# Инициализируем Web3 для всех сетей
+
+def get_random_value():
+    random_percent = random.uniform(0.0001, 0.0002)
+    new_value = int(BASE_VALUE - (BASE_VALUE * random_percent)) & 0xFFFFFFFFFFFFFFFF
+    return hex(new_value)[2:]
+
+
+def get_tx_data():
+    random_value = get_random_value()
+    template = (
+        '0x56591d5961726274000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000189b27215bC6c8d842A4D320fcb232ce8A076013'
+        '0000000000000000000000000000000000000000000000000{value}000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000'
+    )
+    return {chain: template.format(value=random_value) for chain in RPCS.keys()}
+
+
 WEB3_INSTANCES = {name: Web3(Web3.HTTPProvider(url)) for name, url in RPCS.items()}
-
-# Получаем адрес отправителя
 w3_example = next(iter(WEB3_INSTANCES.values()))
 SENDER_ADDRESS = w3_example.eth.account.from_key(PRIVATE_KEY).address
 
 print(f'✅ Адрес отправителя: {SENDER_ADDRESS}')
 
-def send_tx(w3: Web3, chain: str):
-    data = TX_DATA[chain]
+
+def get_network_fees(w3: Web3):
+    fee_history = w3.eth.fee_history(1, 'latest', [50])
+    base_fee = fee_history['baseFeePerGas'][-1]
+    priority_fee_suggested = fee_history['reward'][-1][0]
+
+    return int(base_fee), int(priority_fee_suggested)
+
+
+def send_priority_tx(w3: Web3, chain: str):
+    data = get_tx_data()[chain]
     to_address = TO_ADDRESSES[chain]
 
     for attempt in range(3):
@@ -57,27 +74,28 @@ def send_tx(w3: Web3, chain: str):
                 return False
 
             nonce = w3.eth.get_transaction_count(SENDER_ADDRESS, 'pending')
+            base_fee, suggested_priority_fee = get_network_fees(w3)
 
-            # Получение gas fee динамически через RPC
-            latest_block = w3.eth.get_block('latest')
-            base_fee = latest_block.get('baseFeePerGas', w3.to_wei(1, 'gwei'))
-            priority_fee = w3.to_wei(random.uniform(0.0001, 0.0003), 'gwei')
+            priority_fee = int(suggested_priority_fee * 2.5) + w3.to_wei(0.2, 'gwei')  # 🚀 +150-200%
+            priority_fee = int(priority_fee * (1 + 0.2 * attempt))  # +20% за каждую повторную попытку
 
-            # Estimate gas
+            max_fee_per_gas = base_fee * 2 + priority_fee
+
             estimated_gas = w3.eth.estimate_gas({
                 'from': SENDER_ADDRESS,
                 'to': to_address,
                 'value': w3.to_wei(1, 'ether'),
                 'data': data
             })
+            gas_limit = int(estimated_gas * 1.2)
 
             tx = {
                 'chainId': w3.eth.chain_id,
                 'nonce': nonce,
                 'to': to_address,
-                'value': w3.to_wei(1, 'ether'),  # Транзакция с 1 ETH
-                'gas': estimated_gas,
-                'maxFeePerGas': base_fee + priority_fee,
+                'value': w3.to_wei(1, 'ether'),
+                'gas': gas_limit,
+                'maxFeePerGas': max_fee_per_gas,
                 'maxPriorityFeePerGas': priority_fee,
                 'type': 2,
                 'data': data
@@ -86,29 +104,33 @@ def send_tx(w3: Web3, chain: str):
             signed_tx = w3.eth.account.sign_transaction(tx, private_key=PRIVATE_KEY)
             tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
 
-            print(f"✅ [{chain.upper()}] Транзакция отправлена: {w3.to_hex(tx_hash)} → {to_address}")
+            print(f"✅ [{chain.upper()}] Приоритетная транзакция отправлена: {w3.to_hex(tx_hash)}")
             return True
 
         except Web3RPCError as e:
             error_message = str(e)
             print(f'⚠️ [{chain.upper()}] Ошибка при отправке транзакции: {error_message}')
-            # Игнорируем ошибку и продолжаем выполнение программы
-            continue
+            if 'underpriced' in error_message or 'nonce too low' in error_message:
+                continue
+            else:
+                break
+
         except Exception as e:
             print(f'❌ [{chain.upper()}] Неизвестная ошибка: {str(e)}')
             continue
 
-    print('❌ Не удалось отправить транзакцию после 3 попыток.')
+    print('❌ Не удалось отправить приоритетную транзакцию после 3 попыток.')
     return False
+
 
 # Основной цикл
 while True:
     chain = random.choice(list(RPCS.keys()))
     w3 = WEB3_INSTANCES[chain]
 
-    success = send_tx(w3, chain)
+    success = send_priority_tx(w3, chain)
+
     if not success:
-        # Если баланс кончился, проверяем и по другим сетям
         all_low = True
         for c, w in WEB3_INSTANCES.items():
             bal = w.eth.get_balance(SENDER_ADDRESS)
