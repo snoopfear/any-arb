@@ -18,10 +18,11 @@ CONFIG = {
     "DELAY_RANGE": (5, 10),
     "SUCCESS_DELAY_MULTIPLIER": 1,
     "FAILURE_DELAY_MULTIPLIER": 0.1,
-    # Убираем баланс по времени
-    # "BALANCE_CHECK_INTERVAL_SEC": 300  # 5 минут
-    "BALANCE_CHECK_EVERY_SUCCESS_TX": 10,  # Проверять баланс каждые 10 успешных транзакций
+    "BALANCE_CHECK_EVERY_SUCCESS_TX": 10,
 }
+
+HIGH_BALANCE_THRESHOLD = 200
+HIGH_BALANCE_WEIGHT = 0.7  # Вероятность выбрать цепь с балансом > 200 ETH
 
 # ------------------- ENV SETUP ----------------------
 
@@ -95,11 +96,8 @@ def build_submit_remote_order_data(sender: str, amount_wei: int, max_reward_wei:
     )
 
 def parse_simulation_error(err: Exception) -> str:
-    # Извлекаем только первую часть с кодом ошибки
     msg = str(err)
     if "execution reverted:" in msg:
-        # Пример: "('execution reverted: RO#7', '0x08c3...')"
-        # Возьмём только 'execution reverted: RO#7'
         start = msg.find("execution reverted:")
         end = msg.find("',", start)
         if end == -1:
@@ -122,9 +120,6 @@ def send_remote_order_tx(w3: Web3, from_chain: str, to_chain: str) -> bool:
         estimated_amount = fetch_estimated_amount_wei(from_chain, to_chain)
         calldata = build_submit_remote_order_data(sender, estimated_amount, 10**18, chain_id_hex=to_chain.encode().hex())
 
-        # 🔽 ЛОГ DATA
-        #print(f"📦 [{from_chain.upper()} → {to_chain.upper()}] Calldata: {calldata}")
-
         nonce = w3.eth.get_transaction_count(sender)
 
         fee_history = w3.eth.fee_history(1, 'latest', [50])
@@ -141,10 +136,10 @@ def send_remote_order_tx(w3: Web3, from_chain: str, to_chain: str) -> bool:
 
         try:
             estimated_gas = w3.eth.estimate_gas(tx_common)
-            gas_limit = int(estimated_gas * 1.2)
-        except Exception as estimate_error:
-            print(f"⚠️ Оценка газа не удалась. Использую gas_limit = 105000.")
-            gas_limit = 105_000
+            gas_limit = int(estimated_gas * 1.1)
+        except Exception:
+            print(f"⚠️ Оценка газа не удалась. Использую gas_limit = 110000.")
+            gas_limit = 110_000
 
         tx = {
             **tx_common,
@@ -173,57 +168,81 @@ def send_remote_order_tx(w3: Web3, from_chain: str, to_chain: str) -> bool:
         print(f"❌ [{from_chain.upper()}] Ошибка при отправке TX: {e}")
         return False
 
-# ------------------- MAIN LOOP ----------------------
+# ------------------- BALANCE CHECKS ----------------------
 
-success_tx_count = 0
-low_priority_chains = []
+def get_low_balance_chains():
+    low_balance = []
+    for chain, w3 in WEB3_INSTANCES.items():
+        if chain not in CONFIG["ENABLED_CHAINS"]:
+            continue
+        bal = w3.eth.get_balance(SENDER_ADDRESS)
+        eth_bal = w3.from_wei(bal, 'ether')
+        if eth_bal < CONFIG["THRESHOLD_ETH"]:
+            low_balance.append(chain)
+    return low_balance
+
+def choose_source_chain(all_sources):
+    high_balance_chains = []
+    normal_chains = []
+    for c in all_sources:
+        bal = WEB3_INSTANCES[c].eth.get_balance(SENDER_ADDRESS)
+        eth_bal = WEB3_INSTANCES[c].from_wei(bal, 'ether')
+        if eth_bal > HIGH_BALANCE_THRESHOLD:
+            high_balance_chains.append(c)
+        else:
+            normal_chains.append(c)
+
+    if high_balance_chains and random.random() < HIGH_BALANCE_WEIGHT:
+        return random.choice(high_balance_chains)
+    if normal_chains:
+        return random.choice(normal_chains)
+    return random.choice(all_sources)
 
 def check_balances():
-    global low_priority_chains
     print("\n🔍 Проверка балансов...")
-    low_priority_chains.clear()
-
     for chain, w3 in WEB3_INSTANCES.items():
         if chain not in CONFIG["ENABLED_CHAINS"]:
             continue
         balance = w3.eth.get_balance(SENDER_ADDRESS)
         eth_balance = w3.from_wei(balance, 'ether')
         print(f"   - {chain.upper()}: {eth_balance:.4f} ETH")
-        if eth_balance <= CONFIG["THRESHOLD_ETH"]:
-            low_priority_chains.append(chain)
 
-    if low_priority_chains:
-        print(f"⚠️ Приоритет: {', '.join(c.upper() for c in low_priority_chains)}")
-    else:
-        print("✅ Все балансы в норме.")
+# ------------------- MAIN LOOP ----------------------
+
+success_tx_count = 0
 
 check_balances()
 
 while True:
-    # Проверка баланса по успешным транзакциям
     if success_tx_count > 0 and success_tx_count % CONFIG["BALANCE_CHECK_EVERY_SUCCESS_TX"] == 0:
         check_balances()
 
     all_sources = [c for c in CONFIG["ALLOWED_ROUTES"].keys() if c in CONFIG["ENABLED_CHAINS"]]
-    success = False
 
-    if low_priority_chains:
-        for target in low_priority_chains:
-            for source in all_sources:
-                if target in CONFIG["ALLOWED_ROUTES"].get(source, []) and source != 'arbt':
-                    w3 = WEB3_INSTANCES[source]
-                    success = send_remote_order_tx(w3, source, target)
-                    if success:
-                        break
-            if success:
-                break
+    low_priority_targets = get_low_balance_chains()
+
+    # Целевые цепи для транзакции — либо с низким балансом, либо любые разрешённые
+    if low_priority_targets:
+        target_candidates = low_priority_targets
     else:
-        source = random.choice(all_sources)
-        targets = [t for t in CONFIG["ALLOWED_ROUTES"][source] if t in CONFIG["ENABLED_CHAINS"]]
-        if targets:
-            target = random.choice(targets)
-            w3 = WEB3_INSTANCES[source]
-            success = send_remote_order_tx(w3, source, target)
+        # Собираем все возможные цели из разрешённых маршрутов по всем исходящим цепям
+        target_candidates = []
+        for src in all_sources:
+            target_candidates.extend(CONFIG["ALLOWED_ROUTES"][src])
+        target_candidates = list(set(target_candidates) & set(CONFIG["ENABLED_CHAINS"]))
+
+    source = choose_source_chain(all_sources)
+
+    allowed_targets_for_source = [t for t in CONFIG["ALLOWED_ROUTES"].get(source, []) if t in target_candidates]
+    if not allowed_targets_for_source:
+        print(f"⚠️ Нет разрешённых целей для исходящей цепи {source.upper()}. Пропуск.")
+        time.sleep(3)
+        continue
+
+    target = random.choice(allowed_targets_for_source)
+
+    w3 = WEB3_INSTANCES[source]
+    success = send_remote_order_tx(w3, source, target)
 
     if success:
         success_tx_count += 1
