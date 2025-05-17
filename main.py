@@ -45,7 +45,6 @@ TO_ADDRESSES = {
     'opst': '0xb6Def636914Ae60173d9007E732684a9eEDEF26E',
     'bast': '0xCEE0372632a37Ba4d0499D1E2116eCff3A17d3C3',
     'unit': '0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9',
-    'arbt': '0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54',
 }
 
 WEB3_INSTANCES = {name: Web3(Web3.HTTPProvider(url)) for name, url in RPCS.items()}
