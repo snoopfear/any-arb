@@ -3,6 +3,26 @@
 # Подгружаем переменные окружения
 source ~/.bashrc
 
+
+# Проверка и установка Python3 и pip
+if ! command -v python3 &>/dev/null; then
+    echo "Python3 не найден. Устанавливаю..."
+    sudo apt update && sudo apt install -y python3
+fi
+
+if ! command -v pip3 &>/dev/null; then
+    echo "pip3 не найден. Устанавливаю..."
+    sudo apt update && sudo apt install -y python3-pip
+fi
+
+# Проверка и установка Python-библиотек web3 и requests
+if ! python3 -c "import web3" &>/dev/null; then
+    echo "Python-библиотека 'web3' не найдена. Устанавливаю..."
+    python3 -m pip install --upgrade pip
+    python3 -m pip install web3 requests
+fi
+
+
 # Название папки и screen-сессии
 PROJECT_DIR=~/any-arb
 SESSION_NAME="any-arb"
