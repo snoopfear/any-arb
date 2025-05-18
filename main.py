@@ -19,10 +19,14 @@ CONFIG = {
     "SUCCESS_DELAY_MULTIPLIER": 1,
     "FAILURE_DELAY_MULTIPLIER": 0.1,
     "BALANCE_CHECK_EVERY_SUCCESS_TX": 10,
+
+    # Новый блок настроек запроса к t2rn
+    "ESTIMATE_REFRESH_INTERVAL_RANGE_SEC": (180, 300),  # (3, 5) минут
+    "ESTIMATE_FLUCTUATION_PERCENT_RANGE": (0.0000011, 0.0000015),  # ±0.01%–0.011%
 }
 
-HIGH_BALANCE_THRESHOLD = 200
-HIGH_BALANCE_WEIGHT = 0.7  # Вероятность выбрать цепь с балансом > 200 ETH
+HIGH_BALANCE_THRESHOLD = 100
+HIGH_BALANCE_WEIGHT = 0.7
 
 # ------------------- ENV SETUP ----------------------
 
@@ -52,6 +56,55 @@ w3_example = next(iter(WEB3_INSTANCES.values()))
 SENDER_ADDRESS = w3_example.eth.account.from_key(PRIVATE_KEY).address
 print(f'👤 Sender address: {SENDER_ADDRESS}')
 
+# ------------------- CACHED ESTIMATES ----------------------
+
+_estimate_cache = {}
+_estimate_timestamps = {}
+_estimate_refresh_intervals = {}
+
+def fetch_estimated_amount_wei(from_chain: str, to_chain: str) -> int:
+    key = f"{from_chain}→{to_chain}"
+    now = time.time()
+    last_time = _estimate_timestamps.get(key, 0)
+    interval = _estimate_refresh_intervals.get(key, random.uniform(*CONFIG["ESTIMATE_REFRESH_INTERVAL_RANGE_SEC"]))
+
+    if now - last_time >= interval or key not in _estimate_cache:
+        try:
+            print(f"🌐 Обновление estimate {key} из API")
+            url = "https://api.t2rn.io/estimate"
+            payload = {
+                "amountWei": "1000000000000000000",
+                "executorTipUSD": 5,
+                "fromAsset": "eth",
+                "fromChain": from_chain,
+                "overpayOptionPercentage": 0,
+                "spreadOptionPercentage": 1,
+                "toAsset": "eth",
+                "toChain": to_chain
+            }
+            headers = {"accept": "*/*", "content-type": "application/json"}
+            response = requests.post(url, headers=headers, json=payload, timeout=5)
+            response.raise_for_status()
+            hex_value = response.json()["estimatedReceivedAmountWei"]["hex"]
+            value = int(hex_value, 16)
+            _estimate_cache[key] = value
+            _estimate_timestamps[key] = now
+            _estimate_refresh_intervals[key] = random.uniform(*CONFIG["ESTIMATE_REFRESH_INTERVAL_RANGE_SEC"])
+        except Exception as e:
+            print(f"⚠️ Ошибка при получении estimate: {e}")
+            if key not in _estimate_cache:
+                raise e  # Если данных нет, прерываем
+            value = _estimate_cache[key]
+    else:
+        value = _estimate_cache[key]
+        fluct_range = CONFIG["ESTIMATE_FLUCTUATION_PERCENT_RANGE"]
+        fluct = random.uniform(*fluct_range)
+        fluct *= -1 if random.random() < 0.5 else 1
+        value = int(value * (1 + fluct))
+        print(f"♻️ Используется estimate из кэша с флуктуацией {fluct*100:.5f}%")
+
+    return value
+
 # ------------------- HELPERS ----------------------
 
 def encode_uint256(n: int) -> str:
@@ -62,24 +115,6 @@ def encode_address(addr: str) -> str:
 
 def encode_bytes32(s: str) -> str:
     return s.lower().replace("0x", "").ljust(64, "0")
-
-def fetch_estimated_amount_wei(from_chain: str, to_chain: str) -> int:
-    url = "https://api.t2rn.io/estimate"
-    payload = {
-        "amountWei": "1000000000000000000",
-        "executorTipUSD": 5,
-        "fromAsset": "eth",
-        "fromChain": from_chain,
-        "overpayOptionPercentage": 0,
-        "spreadOptionPercentage": 1,
-        "toAsset": "eth",
-        "toChain": to_chain
-    }
-    headers = {"accept": "*/*", "content-type": "application/json"}
-    response = requests.post(url, headers=headers, json=payload, timeout=5)
-    response.raise_for_status()
-    hex_value = response.json()["estimatedReceivedAmountWei"]["hex"]
-    return int(hex_value, 16)
 
 def build_submit_remote_order_data(sender: str, amount_wei: int, max_reward_wei: int, chain_id_hex: str) -> str:
     selector = "56591d59"
@@ -209,7 +244,6 @@ def check_balances():
 # ------------------- MAIN LOOP ----------------------
 
 success_tx_count = 0
-
 check_balances()
 
 while True:
@@ -217,29 +251,21 @@ while True:
         check_balances()
 
     all_sources = [c for c in CONFIG["ALLOWED_ROUTES"].keys() if c in CONFIG["ENABLED_CHAINS"]]
-
     low_priority_targets = get_low_balance_chains()
 
-    # Целевые цепи для транзакции — либо с низким балансом, либо любые разрешённые
-    if low_priority_targets:
-        target_candidates = low_priority_targets
-    else:
-        # Собираем все возможные цели из разрешённых маршрутов по всем исходящим цепям
-        target_candidates = []
-        for src in all_sources:
-            target_candidates.extend(CONFIG["ALLOWED_ROUTES"][src])
-        target_candidates = list(set(target_candidates) & set(CONFIG["ENABLED_CHAINS"]))
+    target_candidates = low_priority_targets if low_priority_targets else list(set(
+        t for src in all_sources for t in CONFIG["ALLOWED_ROUTES"][src]
+    ) & set(CONFIG["ENABLED_CHAINS"]))
 
     source = choose_source_chain(all_sources)
-
     allowed_targets_for_source = [t for t in CONFIG["ALLOWED_ROUTES"].get(source, []) if t in target_candidates]
+
     if not allowed_targets_for_source:
         print(f"⚠️ Нет разрешённых целей для исходящей цепи {source.upper()}. Пропуск.")
         time.sleep(3)
         continue
 
     target = random.choice(allowed_targets_for_source)
-
     w3 = WEB3_INSTANCES[source]
     success = send_remote_order_tx(w3, source, target)
 
@@ -247,7 +273,7 @@ while True:
         success_tx_count += 1
 
     base_delay = random.randint(*CONFIG["DELAY_RANGE"])
-    delay = int(base_delay * CONFIG["SUCCESS_DELAY_MULTIPLIER"] if success else base_delay * CONFIG["FAILURE_DELAY_MULTIPLIER"])
+    delay = int(base_delay * (CONFIG["SUCCESS_DELAY_MULTIPLIER"] if success else CONFIG["FAILURE_DELAY_MULTIPLIER"]))
     delay = max(1, delay)
 
     print(f"⏳ Следующая попытка через {delay} сек...\n")
